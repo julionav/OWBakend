@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strings"
 )
 
 func main() {
@@ -17,24 +16,36 @@ func main() {
 
 	defer conn.Close()
 
+	inputChan := make(chan string)
+	serverChan := make(chan string)
+
 	inputReader := bufio.NewReader(os.Stdin)
 	serverReader := bufio.NewReader(conn)
 
-	for {
-		fmt.Print(">> ")
-		text, _ := inputReader.ReadString('\n')
-		fmt.Fprintf(conn, text)
-
-		response, _, err := serverReader.ReadLine()
-		if err != nil {
-			fmt.Println("Error reading line " + err.Error())
+	go func() {
+		for {
+			text, _ := inputReader.ReadString('\n')
+			inputChan <- text
 		}
+	}()
 
-		fmt.Println("Server response ->: " + string(response))
+	go func() {
+		for {
+			response, _, _ := serverReader.ReadLine()
+			serverChan <- string(response)
+		}
+	}()
 
-		if strings.TrimSpace(text) == "STOP" {
-			fmt.Println("TCP client exiting...")
-			return
+	for {
+		select {
+		case serverMessage := <-serverChan:
+			if serverMessage == "PING" {
+				fmt.Fprintf(conn, "PONG\n")
+			} else {
+				fmt.Println("Server response ->: " + serverMessage)
+			}
+		case inputMessage := <-inputChan:
+			fmt.Fprintf(conn, inputMessage)
 		}
 	}
 }

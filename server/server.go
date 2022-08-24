@@ -4,17 +4,64 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"time"
 )
 
 type Server struct {
-	clients  []*Socket
+	sockets  []*Socket
 	Messages chan string
 }
 
 type Socket struct {
-	connection   net.Conn
-	sendChan     chan string
-	messagesChan chan string
+	server               *Server
+	connection           net.Conn
+	sendChan             chan string
+	lastMessageTimestamp time.Time
+	disconnectChan       chan bool
+}
+
+func (s *Socket) readMessage() (message string, err error) {
+	message, err = bufio.NewReader(s.connection).ReadString('\n')
+	return
+}
+
+func (s *Socket) disconnect() {
+	s.disconnectChan <- true
+}
+
+func (s *Socket) send(message string) {
+	s.sendChan <- message
+}
+
+func (s *Socket) IP() string {
+	return s.connection.RemoteAddr().String()
+}
+
+func (s *Socket) listen() {
+	fmt.Printf("Serving %s\n", s.IP())
+	newMessageChan := make(chan string)
+
+	// Listen for new messages
+	go func() {
+		for {
+			var message, _ = s.readMessage()
+			newMessageChan <- message
+		}
+	}()
+
+	for {
+		select {
+		case message := <-newMessageChan:
+			s.lastMessageTimestamp = time.Now()
+			s.server.Messages <- message
+		case message := <-s.sendChan:
+			s.connection.Write([]byte(message + "\n"))
+		case <-s.disconnectChan:
+			s.connection.Close()
+			return
+		}
+	}
+
 }
 
 func NewServer() *Server {
@@ -23,30 +70,17 @@ func NewServer() *Server {
 	}
 }
 
-func handleConnection(server *Server, client *Socket) {
-	fmt.Printf("Serving %s\n", client.connection.RemoteAddr().String())
-
-	clientReader := bufio.NewReader(client.connection)
-
-	for {
-		message, err := clientReader.ReadString('\n')
-		if err != nil {
-			if err.Error() == "EOF" {
-				fmt.Println("Disconnected: " + client.connection.RemoteAddr().String())
-			} else {
-				// Seems to come here on disconnect
-				fmt.Println("Error with connection " + client.connection.RemoteAddr().String() + err.Error())
-			}
-		}
-
-		server.Messages <- message
-		fmt.Println("Added message to server buffer:", message)
-
-		// Notify back to client to resume execution. Otherwise, client will be blocked waiting for io.
-		_, err = client.connection.Write([]byte(message))
-		if err != nil {
-			fmt.Println("Error writing back to client")
-			return
+func handleInnactiveSockets(s *Server) {
+	fmt.Println("Checking for inactive sockets")
+	now := time.Now()
+	for _, socket := range s.sockets {
+		if socket.lastMessageTimestamp.Add(5 * time.Second).Before(now) {
+			// TODO: Lock and remove socket from array remove socket --> use mutex and that weird stuff.
+			fmt.Println("Disconnecting inactive socket with ip " + socket.IP())
+			socket.disconnect()
+		} else {
+			fmt.Println("Sending ping to... " + socket.IP())
+			socket.send("PING")
 		}
 	}
 }
@@ -60,6 +94,15 @@ func (s *Server) Start(port string) {
 
 	fmt.Println("Server started")
 
+	// Ping/Pong management
+	pingTicker := time.NewTicker(1 * time.Second)
+	go func() {
+		for {
+			<-pingTicker.C
+			handleInnactiveSockets(s)
+		}
+	}()
+
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -67,8 +110,8 @@ func (s *Server) Start(port string) {
 			return
 		}
 
-		client := &Socket{connection: conn, messagesChan: make(chan string), sendChan: make(chan string)}
-		s.clients = append(s.clients, client)
-		go handleConnection(s, client)
+		socket := &Socket{server: s, connection: conn, sendChan: make(chan string), lastMessageTimestamp: time.Now()}
+		s.sockets = append(s.sockets, socket)
+		go socket.listen()
 	}
 }
