@@ -3,7 +3,6 @@ package server
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"net"
 )
 
@@ -28,17 +27,9 @@ func handleConnection(server *Server, client *Socket) {
 	fmt.Printf("Serving %s\n", client.connection.RemoteAddr().String())
 
 	clientReader := bufio.NewReader(client.connection)
-	buff := make([]byte, 1024)
 
 	for {
-		// Read a single byte which contains the message length
-		size, err := clientReader.ReadByte()
-		if err != nil {
-			panic(err)
-		}
-
-		// Read the full message, or return an error
-		_, err = io.ReadAtLeast(clientReader, buff[:int(size)], 1)
+		message, err := clientReader.ReadString('\n')
 		if err != nil {
 			if err.Error() == "EOF" {
 				fmt.Println("Disconnected: " + client.connection.RemoteAddr().String())
@@ -48,23 +39,15 @@ func handleConnection(server *Server, client *Socket) {
 			}
 		}
 
-		// We chopped the first byte to know the message size.
-		// We need to reconstruct the full message appending the first byte.
-		fullMessage := append([]byte{size}, buff[:int(size)]...)
-		message := string(fullMessage)
-
 		server.Messages <- message
 		fmt.Println("Added message to server buffer:", message)
 
 		// Notify back to client to resume execution. Otherwise, client will be blocked waiting for io.
-		_, err = client.connection.Write(fullMessage)
+		_, err = client.connection.Write([]byte(message))
 		if err != nil {
 			fmt.Println("Error writing back to client")
 			return
 		}
-
-		// Clear buffer
-		buff = append(buff[:size], buff[size+1:]...)
 	}
 }
 
