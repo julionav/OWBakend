@@ -1,0 +1,6 @@
+/server/models/*.pb.go
+/.idea/.gitignore
+/.idea/modules.xml
+/.idea/OWBakend.iml
+/.idea/protoeditor.xml
+/.idea/vcs.xml

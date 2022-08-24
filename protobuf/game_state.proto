@@ -1,0 +1,13 @@
+syntax = "proto3";
+package kuroroOverWorld;
+
+option go_package = "github.com/julionav/OWBakend/server/models";
+option csharp_namespace = "";
+
+import "player_state.proto";
+
+message ServerState {
+  int64 tickId = 1;
+
+  repeated PlayerState playerStates = 2;
+}
